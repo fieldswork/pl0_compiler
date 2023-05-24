@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "stdlib.h": "c",
+        "stdio.h": "c",
+        "typeinfo": "c"
+    },
+    "cSpell.words": [
+        "gtrsym"
+    ]
+}

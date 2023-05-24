@@ -1,0 +1,1080 @@
+// COP3402 - Fall 2021
+// Group Members: Arthur Upfield and Henry Graves
+// HW3 Parser - Code Generator
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include "compiler.h"
+
+#define MAX_CODE_LENGTH 1000
+#define MAX_SYMBOL_COUNT 100
+
+// TODO list:
+// -----------------------------------------------------------------
+// Start testing
+//
+// Finish Adapts
+// Verify that execution stop when functions return an error
+//    Lines where this needs to happen are commented "verify errorCheck"
+
+
+instruction *code;
+int cIndex = 0;
+symbol *table;
+int tIndex = 0; // where they reference token in the pseudocode, they mean tIndex. Works best as a global imo.
+int symbolTableSize = 0;
+
+void emit(int opname, int level, int mvalue);
+void addToSymbolTable(int k, char n[], int v, int l, int a, int m);
+void printparseerror(int err_code);
+void printsymboltable();
+void printassemblycode();
+void mark(int level);
+int MULTIPLEDECLARATIONCHECK(int level, char *symbolName);
+int FINDSYMBOL(char *symbolName, int kind);
+
+
+// TODO clean this up once it works lol
+int STATEMENT(lexeme *list, int level);
+int CONST_DECLARATION(lexeme *list, int level);
+int VAR_DECLARATION(lexeme *list, int level);
+int PROCEDURE_DECLARATION(lexeme *list, int level);
+int BLOCK(lexeme *list, int level);
+int CONDITION(lexeme *list, int level);
+int EXPRESSION(lexeme *list, int level);
+int TERM(lexeme *list, int level);
+int FACTOR(lexeme *list, int level);
+int PROGRAM(lexeme *list);
+instruction *parse(lexeme *list, int printTable, int printCode);
+
+instruction *parse(lexeme *list, int printTable, int printCode)
+{
+	code = NULL; // keep this bc it was provided and people say it's necessary
+
+	code = (instruction*)calloc(MAX_CODE_LENGTH, sizeof(instruction));
+	table = (symbol*)calloc(MAX_SYMBOL_COUNT, sizeof(symbol));
+
+	/* this line is EXTREMELY IMPORTANT, you MUST uncomment it
+		when you test your code otherwise IT WILL SEGFAULT in
+		vm.o THIS LINE IS HOW THE VM KNOWS WHERE THE CODE ENDS
+		WHEN COPYING IT TO THE PAS */
+	// The comment above makes me think that cIndex shouldn't be set to 0, but rather the last index. Test later.
+	code[cIndex].opcode = -1; // Uncommented
+
+	// Runs PROGRAM (and all functions included in it), stops code execution if an error is encountered.
+	if (PROGRAM(list) == -1)
+		return NULL;
+
+	// TODO I'm assuming that parameters are 1 if we should print. Check that these are in the right order.
+	if (printTable)
+		printsymboltable();
+	if (printCode)
+		printassemblycode();
+
+	return code;
+}
+
+// PROGRAM - returns -1 if error
+int PROGRAM(lexeme *list)
+{
+	emit(7, 0, 0); // JMP
+	addToSymbolTable(3, "main", 0, 0, 0, 0);
+	symbolTableSize++;
+	int level = -1;
+
+	if (BLOCK(list, level) == -1) // verify errorCheck
+		return -1;
+
+	if (list[tIndex].type != periodsym)
+	{
+		// Error: Program must be closed by a period
+		printparseerror(1);
+		return -1;
+	}
+
+	emit(9, 0, 3); // HALT
+
+	for (int i = 0; i < cIndex; i++) // ADAPT during testing, check cIndex is correct
+	{
+		if (code[i].opcode == 5)
+			code[i].m = table[code[i].m].addr;
+	}
+
+	code[0].m = table[0].addr;
+}
+
+// BLOCK
+int BLOCK(lexeme *list, int level)
+{
+	level++;
+	int procedureIDX = symbolTableSize - 1; // ADAPT procedureIDX = current symbol table index - 1
+
+	// NOTE: only numVars is kept track of in the pseudocode, the TA review suggested keeping track of numConsts and numProcs but he might be wrong.
+	// We're currently tracking numConsts and numProcs BUT not using their values. If we need them, it'll be ez fix. If we don't, ez deletes.
+	// Use these in mark and possibly in INC emit(6,0,numVars+numConsts+numProcs)
+	int numConsts = CONST_DECLARATION(list, level);
+	if (numConsts == -1)
+		return -1;
+
+	int numVars = VAR_DECLARATION(list, level);
+	if (numVars == -1)
+		return -1;
+
+	int numProcs = PROCEDURE_DECLARATION(list, level);
+	if (numProcs == -1)
+		return -1;
+
+	table[procedureIDX].addr = cIndex * 3;
+
+	if (level == 0)
+		emit(6, 0, numVars); // INC
+	else
+		emit(6, 0, numVars + 3); // INC
+
+	if (STATEMENT(list, level) == -1) // verify errorCheck
+			return -1;
+
+	MARK(level);
+
+	level--;
+
+	return 0;
+}
+
+// MARK
+void MARK(int level)
+{
+	for (int i = symbolTableSize - 1; i > 0; i--)
+	{
+		if (table[i].mark == 0 && table[i].level == level)
+			table[i].mark = 1;
+		if (table[i].mark == 0 && table[i].level < level)
+			break;
+	}
+
+	return;
+}
+
+int MULTIPLEDECLARATIONCHECK(int level, char *symbolName)
+{
+	// Start at last index in symbol table and work backwards
+	for (int i = symbolTableSize - 1; i > 0; i--)
+ 	{
+    	if (strcmp(table[i].name, symbolName) == 0 && table[i].mark == 0 && table[i].level == level)
+     		return i;
+ 	}
+
+ 	return -1;
+}
+
+// TA said to find the symbol whose level is closest to the current level, I don't know if that translates perfectly to maximizing the level like the instruction doc says
+int FINDSYMBOL(char *symbolName, int kind)
+{
+	int maxLevelIndex = -1;
+	// Start at last index in symbol table and work backwards
+	for (int i = symbolTableSize - 1; i > 0; i--)
+ 	{
+		// Finds matching symbols and tries to maximize the level value
+    	if (strcmp(table[i].name, symbolName) == 0 && table[i].mark == 0 && table[i].kind == kind)
+    	{
+     		if (maxLevelIndex == -1)
+     			maxLevelIndex = i;
+     		else if (table[i].level > table[maxLevelIndex].level) // During testing, make sure that this is returning the correct symbol. > seems more correct than >=
+     			maxLevelIndex = i;
+    	}
+ 	}
+
+ 	return maxLevelIndex;
+}
+
+// CONST-DECLARATION - returns -1 if error.
+int CONST_DECLARATION(lexeme *list, int level)
+{
+	int numConsts = 0; // ADAPT currently not tracking numConsts, implement if we find this is necessary
+
+	if (list[tIndex].type == constsym)
+	{
+		do
+		{
+			numConsts++;
+			tIndex++;
+			if (list[tIndex].type != identsym)
+			{
+				// Error: Constant declarations should follow the pattern 'ident := number {, ident := number}'
+				printparseerror(2);
+				return -1;
+			}
+
+			int symidx = MULTIPLEDECLARATIONCHECK(level, list[tIndex].name); // May need to pass level as well.
+
+			if (symidx != -1)
+			{
+				// Error: Confliciting symbol declarations
+				printparseerror(18);
+				return -1;
+			}
+
+			char *identName = list[symidx].name;
+
+			tIndex++;
+			if (list[tIndex].type != assignsym)
+			{
+				// Error: Constant declarations should follow the pattern 'ident := number {, ident := number}'
+				printparseerror(2);
+				return -1;
+			}
+
+			tIndex++;
+			if (list[tIndex].type != numbersym)
+			{
+				// Error: Constant declarations should follow the pattern 'ident := number {, ident := number}'
+				printparseerror(2);
+				return -1;
+			}
+
+			addToSymbolTable(1, identName, list[tIndex].value, level, 0, 0);
+			symbolTableSize++;
+			tIndex++;
+		} while (list[tIndex].type == commasym);
+
+		if (list[tIndex].type != semicolonsym)
+			if(list[tIndex].type == identsym)
+			{
+				// Error: Multiple symbols in variable and constant declarations must be separated by commas
+				printparseerror(13);
+				return -1;
+			}
+			else
+			{
+				// Error: Symbol declarations should close with a semicolon
+				printparseerror(14);
+				return -1;
+			}
+
+		tIndex++;
+	}
+
+	return numConsts;
+}
+
+// VAR-DECLARATION - returns -1 if error.
+int VAR_DECLARATION(lexeme *list, int level)
+{
+	int numVars = 0;
+
+	if (list[tIndex].type == varsym)
+	{
+		do
+		{
+			numVars++;
+			tIndex++;
+
+			if (list[tIndex].type != identsym)
+			{
+				// Error: Variable declarations should follow the pattern 'ident {, ident}'
+				printparseerror(3);
+				return -1;
+			}
+
+			int symidx = MULTIPLEDECLARATIONCHECK(level, list[tIndex].name); // May need to pass level as well.
+
+			if (symidx != -1)
+			{
+				// Error: Confliciting symbol declarations
+				printparseerror(18);
+				return -1;
+			}
+
+			if (level == 0)
+			{
+				addToSymbolTable(2, list[symidx].name, 0, level, numVars-1, 0);
+				symbolTableSize++;
+			}
+			else
+			{
+				addToSymbolTable(2, list[symidx].name, 0, level, numVars+2, 0);
+				symbolTableSize++;
+			}
+
+			tIndex++;
+		} while (list[tIndex].type == commasym);
+
+		if (list[tIndex].type != semicolonsym)
+			if(list[tIndex].type == identsym)
+			{
+				// Error: Multiple symbols in variable and constant declarations must be separated by commas
+				printparseerror(13);
+				return -1;
+			}
+			else
+			{
+				// Error: Symbol declarations should close with a semicolon
+				printparseerror(14);
+				return -1;
+			}
+
+		tIndex++;
+	}
+
+	return numVars;
+}
+
+// PROCEDURE-DECLARATION - returns -1 if error.
+int PROCEDURE_DECLARATION(lexeme *list, int level)
+{
+	int numProcs = 0; // ADAPT currently not tracking numProcs, implement if we find this is necessary
+
+	while (list[tIndex].type == procsym)
+	{
+		tIndex++;
+
+		if (list[tIndex].type != identsym)
+		{
+			// Error: Procedure declarations should follow the pattern 'ident ;'
+			printparseerror(4);
+			return -1;
+		}
+
+		int symidx = MULTIPLEDECLARATIONCHECK(level, list[tIndex].name); // May need to pass level as well.
+
+		if (symidx != -1)
+		{
+			// Error: Confliciting symbol declarations
+			printparseerror(18);
+			return -1;
+		}
+
+		addToSymbolTable(3, list[symidx].name, 0, level, 0, 0);
+		symbolTableSize++;
+
+		tIndex++;
+
+		if (list[tIndex].type != semicolonsym)
+		{
+			// Error: Procedure declarations should follow the pattern 'ident ;'
+			printparseerror(4);
+			return -1;
+		}
+
+		tIndex++;
+
+		if (block(list, level) == -1) // verify errorCheck
+			return -1;
+
+		if (list[tIndex].type != semicolonsym)
+		{
+			// Error: Symbol declarations should close with a semicolon
+			printparseerror(14);
+			return -1;
+		}
+
+		emit(2, 0, 0); // RTN
+	}
+
+	return numProcs;
+}
+
+// STATEMENT - returns -1 if error
+int STATEMENT(lexeme *list, int level)
+{
+	if (list[tIndex].type == identsym)
+	{
+		int symbolIDX = FINDSYMBOL(list[tIndex].name, 2);
+
+		if (symbolIDX == -1)
+		{
+			// Error if symbol was a constant or procedure.
+			if (FINDSYMBOL(list[tIndex].name, 1) != FINDSYMBOL(list[tIndex].name, 3))
+			{
+				// Error: Only variables may be assigned to or read.
+				printparseerror(6);
+				return -1;
+			}
+
+			else
+			{
+				// Error: Undeclared identifier.
+				printparseerror(19);
+				return -1;
+			}
+		}
+
+		tIndex++;
+
+		if (list[tIndex].type != assignsym)
+		{
+			// Error: Variables must be assigned using :=
+			printparseerror(5);
+			return -1;
+		}
+
+		tIndex++;
+
+		if (EXPRESSION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		emit(4, level - table[symbolIDX].level, table[symbolIDX].addr); // STO
+
+		return 0;
+	}
+
+	if (list[tIndex].type == beginsym)
+	{
+		do
+		{
+			tIndex++;
+
+			if (STATEMENT(list, level) == -1) // verify errorCheck
+				return -1;
+		} while (list[tIndex].type == semicolonsym);
+
+		if (list[tIndex].type != endsym)
+		{
+			if (list[tIndex].type == identsym || list[tIndex].type == beginsym || list[tIndex].type == ifsym || list[tIndex].type == whilesym ||
+				list[tIndex].type == readsym || list[tIndex].type == writesym || list[tIndex].type == callsym)
+			{
+				// Error: Statements within begin-end must be separated by a semicolon
+				printparseerror(15);
+				return -1;
+			}
+			else
+			{
+				// Error: Begin must be followed by end
+				printparseerror(16);
+				return -1;
+			}
+		}
+
+		tIndex++;
+
+		return 0;
+	}
+
+	if (list[tIndex].type == ifsym)
+	{
+		tIndex++;
+
+		if (CONDITION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		int jpcIDX = cIndex;
+		emit(8, 0, 0); // JPC
+
+		if (list[tIndex].type != thensym)
+		{
+			// Error: if must be followed by then
+			printparseerror(8);
+			return -1;
+		}
+
+		tIndex++;
+
+		if (STATEMENT(list, level) == -1) // verify errorCheck
+			return -1;
+
+		if (list[tIndex].type == elsesym)
+		{
+			int jmpIDX = cIndex;
+			emit(7, 0, 0); // JMP
+			code[jpcIDX].m = cIndex * 3;
+			tIndex++; // ADDED AS A TIP FROM SOMEONE WHO COMPLETED THE PROJECT ALREADY
+
+			if (STATEMENT(list, level) == -1) // verify errorCheck
+				return -1;
+
+			code[jmpIDX].m = cIndex * 3;
+		}
+		else
+		{
+			code[jpcIDX].m = cIndex * 3;
+		}
+
+		return 0;
+	}
+
+	if (list[tIndex].type == whilesym)
+	{
+		tIndex++;
+		int loopIDX = cIndex;
+
+		if (CONDITION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		if (list[tIndex].type != dosym)
+		{
+			// Error: while must be followed by do
+			printparseerror(9);
+			return -1;
+		}
+
+		tIndex++;
+
+		int jpcIDX = cIndex;
+		emit(8, 0, 0); // JPC
+
+		if (STATEMENT(list, level) == -1) // verify errorCheck
+			return -1;
+
+		emit(7, 0, loopIDX * 3); // JMP
+
+		code[jpcIDX].m = cIndex * 3;
+
+		return 0;
+	}
+
+	if (list[tIndex].type == readsym)
+	{
+		tIndex++;
+
+		if (list[tIndex].type != identsym)
+		{
+			// Error: Only variables may be assigned to or read
+			printparseerror(6); // verify errorNum
+			return -1;
+		}
+
+		int symIDX = FINDSYMBOL(list[tIndex].name, 2);
+
+		if (symIDX == -1)
+		{
+			// Error if symbol was a constant or procedure.
+			if (FINDSYMBOL(list[tIndex].name, 1) != FINDSYMBOL(list[tIndex].name, 3))
+			{
+				// Error: Only variables may be assigned to or read
+				printparseerror(6);
+				return -1;
+			}
+			else
+			{
+				// Error: Undeclared identifier
+				printparseerror(19);
+				return -1;
+			}
+		}
+
+		tIndex++;
+
+		emit(9, 0, 2); // READ
+		emit(4, level - table[symIDX].level, table[symIDX].addr); // STO
+
+		return 0;
+	}
+
+	if (list[tIndex].type == writesym)
+	{
+		tIndex++;
+
+		if (EXPRESSION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		emit(9, 0, 1); // WRITE
+
+		return 0;
+	}
+
+	if (list[tIndex].type == callsym)
+	{
+		tIndex++;
+		int symIDX = FINDSYMBOL(list[tIndex].name, 3);
+
+		if (symIDX == -1)
+		{
+			// Error if symbol was a const or var.
+			if (FINDSYMBOL(list[tIndex].name, 1) != FINDSYMBOL(list[tIndex].name, 2))
+			{
+				// Error: call must be followed by a procedure identifier
+				printparseerror(7);
+				return -1;
+			}
+			else
+			{
+				// Error: Undeclared identifier
+				printparseerror(19); // Verify errorNum (instruction doc contradicts itself)
+				return -1;
+			}
+		}
+
+		tIndex++;
+
+		emit(5, level - table[symIDX].level, symIDX); // CAL
+	}
+
+	return 0;
+}
+
+// CONDITION - Returns -1 if error
+int CONDITION(lexeme *list, int level)
+{
+	if (list[tIndex].type == oddsym)
+	{
+		tIndex++;
+
+		if (EXPRESSION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		emit(2, 0, 6); // ODD
+	}
+	else
+	{
+		if (EXPRESSION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		if (list[tIndex].type != eqlsym)
+		{
+			tIndex++;
+
+			if (EXPRESSION(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 8); // EQL
+		}
+		else if (list[tIndex].type != neqsym)
+		{
+			tIndex++;
+
+			if (EXPRESSION(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 9); // NEQ
+		}
+		else if (list[tIndex].type != lsssym)
+		{
+			tIndex++;
+
+			if (EXPRESSION(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 10); // LSS
+		}
+		else if (list[tIndex].type != leqsym)
+		{
+			tIndex++;
+
+			if (EXPRESSION(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 11); // LEQ
+		}
+		else if (list[tIndex].type != gtrsym)
+		{
+			tIndex++;
+
+			if (EXPRESSION(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 12); // GTR
+		}
+		else if (list[tIndex].type != geqsym)
+		{
+			tIndex++;
+
+			if (EXPRESSION(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 13); // GEQ
+		}
+		else
+		{
+			// Error: Relational operator missing from condition
+			printparseerror(10);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+// EXPRESSION - returns -1 if error
+int EXPRESSION(lexeme *list, int level)
+{
+	if (list[tIndex].type == subsym)
+	{
+		tIndex++;
+
+		if (TERM(list, level) == -1) // verify errorCheck
+			return -1;
+
+		emit(2, 0, 1); // NEG
+
+		while (list[tIndex].type == addsym || list[tIndex].type == subsym)
+		{
+			if (list[tIndex].type == addsym)
+			{
+				tIndex++;
+
+				if (TERM(list, level) == -1) // verify errorCheck
+					return -1;
+
+				emit(2, 0, 2); // ADD
+			}
+			else
+			{
+				tIndex++;
+
+				if (TERM(list, level) == -1) // verify errorCheck
+					return -1;
+
+				emit(2, 0, 3); // SUB
+			}
+		}
+	}
+	else
+	{
+		if (list[tIndex].type == addsym)
+			tIndex++;
+
+		if (TERM(list, level) == -1) // verify errorCheck
+			return -1;
+
+		while (list[tIndex].type == addsym || list[tIndex].type == subsym)
+		{
+			if (list[tIndex].type == addsym)
+			{
+				tIndex++;
+
+				if (TERM(list, level) == -1) // verify errorCheck
+					return -1;
+
+				emit(2, 0, 2); // ADD
+			}
+			else
+			{
+				tIndex++;
+
+				if (TERM(list, level) == -1) // verify errorCheck
+					return -1;
+
+				emit(2, 0, 3); // SUB
+			}
+		}
+	}
+	if (list[tIndex].type == lparensym || list[tIndex].type == identsym ||
+		list[tIndex].type == numbersym || list[tIndex].type == oddsym)
+	{
+		// Error: Bad arithmetic
+		printparseerror(17);
+		return -1;
+	}
+
+	return 0;
+}
+
+// TERM - returns -1 if a function it calls encounters an error.
+int TERM(lexeme *list, int level)
+{
+	if (FACTOR(list, level) == -1) // verify errorCheck
+		return -1;
+
+	while (list[tIndex].type == multsym || list[tIndex].type == divsym || list[tIndex].type == modsym)
+	{
+		if (list[tIndex].type == multsym)
+		{
+			tIndex++;
+
+			if (FACTOR(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 4); // MUL
+		}
+		else if (list[tIndex].type == divsym)
+		{
+			tIndex++;
+
+			if (FACTOR(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 5); // DIV
+		}
+		else
+		{
+			tIndex++;
+
+			if (FACTOR(list, level) == -1) // verify errorCheck
+				return -1;
+
+			emit(2, 0, 7); // MOD
+		}
+	}
+
+	// No errors
+	return 0;
+}
+
+// FACTOR - returns -1 if error
+int FACTOR(lexeme *list, int level)
+{
+	if (list[tIndex].type == identsym)
+	{
+		int symIdx_var = FINDSYMBOL(list[tIndex].name, 2);
+		int symIdx_const = FINDSYMBOL(list[tIndex].name, 1);
+
+		// If findsymbol didn't find a var or const
+		if (symIdx_var == -1 && symIdx_const == -1)
+		{
+			// If symbol is a procedure, error
+			if (FINDSYMBOL(list[tIndex].name, 3) != -1)
+			{
+				// Error: Arithmetic expressions may only contain arithmetic operators, numbers, parentheses, constants, and variables
+				printparseerror(11);
+				return -1;
+			}
+			else
+			{
+				// Error: Undeclared identifier
+				printparseerror(19);
+				return -1;
+			}
+		}
+
+		if (symIdx_var == -1) // something about (const) in pseudocode for this line, not sure what that means
+			emit(1, 0, table[symIdx_const].val); // LIT
+		else if (symIdx_const == -1 || table[symIdx_var].level > table[symIdx_const].level)
+			emit(3, level - table[symIdx_var].level, table[symIdx_var].addr); // LOD
+		else
+			emit(1, 0, table[symIdx_const].val); // LIT
+
+		tIndex++;
+	}
+	else if (list[tIndex].type == numbersym)
+	{
+		emit(1, 0, list[tIndex].value); // LIT
+		tIndex++;
+	}
+	else if (list[tIndex].type == lparensym)
+	{
+		tIndex++;
+		if (EXPRESSION(list, level) == -1) // verify errorCheck
+			return -1;
+
+		if (list[tIndex].type != rparensym)
+		{
+			// Error: ( must be followed by )
+			printparseerror(12);
+			return -1;
+		}
+
+		tIndex++;
+	}
+	else
+	{
+		// Error: Arithmetic expressions may only contain arithmetic operators, numbers, parentheses, constants, and variables
+		printparseerror(11);
+		return -1;
+	}
+
+	return 0;
+}
+
+// Below here are functions that came with the program. Thanks, TAs!
+
+void emit(int opname, int level, int mvalue)
+{
+	code[cIndex].opcode = opname;
+	code[cIndex].l = level;
+	code[cIndex].m = mvalue;
+	cIndex++;
+}
+
+void addToSymbolTable(int k, char n[], int v, int l, int a, int m)
+{
+	table[tIndex].kind = k;
+	strcpy(table[tIndex].name, n);
+	table[tIndex].val = v;
+	table[tIndex].level = l;
+	table[tIndex].addr = a;
+	table[tIndex].mark = m;
+	tIndex++;
+}
+
+
+void printparseerror(int err_code)
+{
+	switch (err_code)
+	{
+		case 1:
+			printf("Parser Error: Program must be closed by a period\n");
+			break;
+		case 2:
+			printf("Parser Error: Constant declarations should follow the pattern 'ident := number {, ident := number}'\n");
+			break;
+		case 3:
+			printf("Parser Error: Variable declarations should follow the pattern 'ident {, ident}'\n");
+			break;
+		case 4:
+			printf("Parser Error: Procedure declarations should follow the pattern 'ident ;'\n");
+			break;
+		case 5:
+			printf("Parser Error: Variables must be assigned using :=\n");
+			break;
+		case 6:
+			printf("Parser Error: Only variables may be assigned to or read\n");
+			break;
+		case 7:
+			printf("Parser Error: call must be followed by a procedure identifier\n");
+			break;
+		case 8:
+			printf("Parser Error: if must be followed by then\n");
+			break;
+		case 9:
+			printf("Parser Error: while must be followed by do\n");
+			break;
+		case 10:
+			printf("Parser Error: Relational operator missing from condition\n");
+			break;
+		case 11:
+			printf("Parser Error: Arithmetic expressions may only contain arithmetic operators, numbers, parentheses, constants, and variables\n");
+			break;
+		case 12:
+			printf("Parser Error: ( must be followed by )\n");
+			break;
+		case 13:
+			printf("Parser Error: Multiple symbols in variable and constant declarations must be separated by commas\n");
+			break;
+		case 14:
+			printf("Parser Error: Symbol declarations should close with a semicolon\n");
+			break;
+		case 15:
+			printf("Parser Error: Statements within begin-end must be separated by a semicolon\n");
+			break;
+		case 16:
+			printf("Parser Error: begin must be followed by end\n");
+			break;
+		case 17:
+			printf("Parser Error: Bad arithmetic\n");
+			break;
+		case 18:
+			printf("Parser Error: Confliciting symbol declarations\n");
+			break;
+		case 19:
+			printf("Parser Error: Undeclared identifier\n");
+			break;
+		default:
+			printf("Implementation Error: unrecognized error code\n");
+			break;
+	}
+
+	free(code);
+	free(table);
+}
+
+void printsymboltable()
+{
+	int i;
+	printf("Symbol Table:\n");
+	printf("Kind | Name        | Value | Level | Address | Mark\n");
+	printf("---------------------------------------------------\n");
+	for (i = 0; i < tIndex; i++)
+		printf("%4d | %11s | %5d | %5d | %5d | %5d\n", table[i].kind, table[i].name, table[i].val, table[i].level, table[i].addr, table[i].mark);
+
+	free(table);
+	table = NULL;
+}
+
+void printassemblycode()
+{
+	int i;
+	printf("Line\tOP Code\tOP Name\tL\tM\n");
+	for (i = 0; i < cIndex; i++)
+	{
+		printf("%d\t", i);
+		printf("%d\t", code[i].opcode);
+		switch (code[i].opcode)
+		{
+			case 1:
+				printf("LIT\t");
+				break;
+			case 2:
+				switch (code[i].m)
+				{
+					case 0:
+						printf("RTN\t");
+						break;
+					case 1:
+						printf("NEG\t");
+						break;
+					case 2:
+						printf("ADD\t");
+						break;
+					case 3:
+						printf("SUB\t");
+						break;
+					case 4:
+						printf("MUL\t");
+						break;
+					case 5:
+						printf("DIV\t");
+						break;
+					case 6:
+						printf("ODD\t");
+						break;
+					case 7:
+						printf("MOD\t");
+						break;
+					case 8:
+						printf("EQL\t");
+						break;
+					case 9:
+						printf("NEQ\t");
+						break;
+					case 10:
+						printf("LSS\t");
+						break;
+					case 11:
+						printf("LEQ\t");
+						break;
+					case 12:
+						printf("GTR\t");
+						break;
+					case 13:
+						printf("GEQ\t");
+						break;
+					default:
+						printf("err\t");
+						break;
+				}
+				break;
+			case 3:
+				printf("LOD\t");
+				break;
+			case 4:
+				printf("STO\t");
+				break;
+			case 5:
+				printf("CAL\t");
+				break;
+			case 6:
+				printf("INC\t");
+				break;
+			case 7:
+				printf("JMP\t");
+				break;
+			case 8:
+				printf("JPC\t");
+				break;
+			case 9:
+				switch (code[i].m)
+				{
+					case 1:
+						printf("WRT\t");
+						break;
+					case 2:
+						printf("RED\t");
+						break;
+					case 3:
+						printf("HAL\t");
+						break;
+					default:
+						printf("err\t");
+						break;
+				}
+				break;
+			default:
+				printf("err\t");
+				break;
+		}
+		printf("%d\t%d\n", code[i].l, code[i].m);
+	}
+	if (table != NULL)
+		free(table);
+}

@@ -1,0 +1,98 @@
+Lexeme Table:
+lexeme		token type
+        var	2
+          x	12
+          ,	29
+          w	12
+          ;	31
+         do	4
+          x	12
+         :=	14
+          4	13
+          ;	31
+       read	11
+          w	12
+          ;	31
+       when	7
+          w	12
+          >	24
+          x	12
+         do	4
+          w	12
+         :=	14
+          w	12
+          +	15
+          1	13
+     elsedo	8
+          w	12
+         :=	14
+          x	12
+          ;	31
+      write	10
+          w	12
+         od	5
+          .	30
+
+Token List:
+2 12 x 29 12 w 31 4 12 x 14 13 4 31 11 12 w 31 7 12 w 24 12 x 4 12 w 14 12 w 15 13 1 8 12 w 14 12 x 31 10 12 w 5 30 
+Symbol Table:
+Kind | Name        | Value | Level | Address | Mark
+---------------------------------------------------
+   3 |        main |     0 |     0 |     3 |     1
+   2 |           x |     0 |     0 |     0 |     1
+   2 |           w |     0 |     0 |     1 |     1
+Line	OP Code	OP Name	L	M
+0	7	JMP	0	3
+1	6	INC	0	2
+2	1	LIT	0	4
+3	4	STO	0	0
+4	9	RED	0	2
+5	4	STO	0	1
+6	3	LOD	0	1
+7	3	LOD	0	0
+8	2	GTR	0	12
+9	8	JPC	0	45
+10	3	LOD	0	1
+11	1	LIT	0	1
+12	2	ADD	0	2
+13	4	STO	0	1
+14	7	JMP	0	51
+15	3	LOD	0	0
+16	4	STO	0	1
+17	3	LOD	0	1
+18	9	WRT	0	1
+19	9	HAL	0	3
+                PC   BP    SP    DP    data
+Initial values: 0    60    500   59    
+ 0 JMP 0   3     3   60    500   59    
+stack: 
+ 1 INC 0   2     6   60    500   61    0 0 
+stack: 
+ 2 LIT 0   4     9   60    500   62    0 0 4 
+stack: 
+ 3 STO 0   0    12   60    500   61    4 0 
+stack: 
+Please Enter an Integer:  4 SYS 0   2    15   60    500   62    4 0 3 
+stack: 
+ 5 STO 0   1    18   60    500   61    4 3 
+stack: 
+ 6 LOD 0   1    21   60    500   62    4 3 3 
+stack: 
+ 7 LOD 0   0    24   60    500   63    4 3 3 4 
+stack: 
+ 8 GTR 0  12    27   60    500   62    4 3 0 
+stack: 
+ 9 JPC 0  45    45   60    500   61    4 3 
+stack: 
+15 LOD 0   0    48   60    500   62    4 3 4 
+stack: 
+16 STO 0   1    51   60    500   61    4 4 
+stack: 
+17 LOD 0   1    54   60    500   62    4 4 4 
+stack: 
+Top of Stack Value: 4
+18 SYS 0   1    57   60    500   61    4 4 
+stack: 
+19 SYS 0   3    60   60    500   61    4 4 
+stack: 
+
